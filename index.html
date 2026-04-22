@@ -1,44 +1,54 @@
-
 <!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>FlightOps V3</title>
+<title>FlightOps Clock V4</title>
 
 <style>
 body {
     margin:0;
     background:#000;
     color:#fff;
-    font-family: -apple-system;
+    font-family:-apple-system;
     overflow:hidden;
 }
 
+/* CLOCK MODE */
 #clock {
-    font-size: 30vh;
+    font-size:45vh;
     text-align:center;
-    margin-top:10vh;
+    margin-top:12vh;
+    font-weight:800;
 }
 
+/* FLIGHT PANEL */
 #flight {
-    position:absolute;
-    top:0;
-    width:100%;
     display:none;
     padding:20px;
     box-sizing:border-box;
 }
 
-.card {
+.row {
     display:flex;
     justify-content:space-between;
-    padding:20px;
+    padding:18px;
     border-bottom:1px solid #222;
 }
 
-.label { color:#888; font-size:12px; }
-.value { font-size:20px; font-weight:bold; }
+.box {
+    width:32%;
+}
+
+.label {
+    font-size:12px;
+    color:#888;
+}
+
+.value {
+    font-size:20px;
+    font-weight:bold;
+}
 
 #weather {
     position:absolute;
@@ -51,8 +61,21 @@ body {
     border-top:1px solid #222;
 }
 
-.box {
-    width:48%;
+.small {
+    font-size:14px;
+    color:#aaa;
+}
+
+.state {
+    color:#34c759;
+}
+
+.warn {
+    color:#ff9500;
+}
+
+.danger {
+    color:#ff3b30;
 }
 </style>
 </head>
@@ -63,64 +86,76 @@ body {
 
 <div id="flight">
 
-    <div class="card">
-        <div>
+    <div class="row">
+        <div class="box">
             <div class="label">FLIGHT</div>
             <div id="flightNo" class="value">---</div>
         </div>
-        <div>
+
+        <div class="box">
             <div class="label">ROUTE</div>
             <div id="route" class="value">---</div>
         </div>
-        <div>
+
+        <div class="box">
             <div class="label">PICKUP</div>
             <div id="pickup" class="value">---</div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="box">
+            <div class="label">STATUS</div>
+            <div id="status" class="value state">SCHEDULED</div>
+        </div>
+
+        <div class="box">
+            <div class="label">DEP WEATHER</div>
+            <div id="depW" class="value">---</div>
+        </div>
+
+        <div class="box">
+            <div class="label">ARR WEATHER</div>
+            <div id="arrW" class="value">---</div>
         </div>
     </div>
 
 </div>
 
 <div id="weather">
-    <div class="box">
-        <div class="label">DEP WEATHER</div>
-        <div id="depWeather">---</div>
-    </div>
-    <div class="box">
-        <div class="label">ARR WEATHER</div>
-        <div id="arrWeather">---</div>
-    </div>
+    <div class="small">Dubai System Clock Dashboard</div>
+    <div class="small" id="dxbWeather">DXB --°</div>
 </div>
 
 <script>
 
 /* =========================
-   CONFIG
+CONFIG
 ========================= */
-
 const GAS_URL = "YOUR_GOOGLE_SCRIPT_URL";
 
-/* =========================
-   DATA SERVICE (API层)
-========================= */
+/* DXB */
+const DXB = { lat:25.25, lon:55.36 };
 
+/* =========================
+API LAYER
+========================= */
 const API = {
 
 async getFlight() {
-    const res = await fetch(GAS_URL);
-    return await res.json();
+    const r = await fetch(GAS_URL);
+    return await r.json();
 },
 
-async getWeather(lat, lon) {
-    const res = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`
-    );
-    return await res.json();
+async weather(lat, lon) {
+    const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`);
+    return await r.json();
 },
 
-async getLiveFlight(code) {
+async liveFlight(code) {
     try {
-        const res = await fetch(`https://api.opensky-network.org/api/states/all?callsign=${code}`);
-        return await res.json();
+        const r = await fetch(`https://api.opensky-network.org/api/states/all?callsign=${code}`);
+        return await r.json();
     } catch(e) {
         return null;
     }
@@ -129,68 +164,102 @@ async getLiveFlight(code) {
 };
 
 /* =========================
-   ENGINE（飞行状态机）
+ENGINE
 ========================= */
 
 const Engine = {
 
-getState(radar) {
-    if (!radar) return "SCHEDULED";
-    if (radar.altitude < 1000) return "TAKEOFF";
-    if (radar.altitude > 30000) return "CRUISE";
-    return "DESCENT";
+pickup(std) {
+    return new Date(new Date(std).getTime() - 135*60000);
 },
 
-calcPickup(std) {
-    return new Date(new Date(std).getTime() - 135*60000);
+state(radar) {
+    if(!radar || !radar.states) return "SCHEDULED";
+
+    const s = radar.states[0];
+    const alt = s[7];
+
+    if(!alt) return "GROUND";
+    if(alt < 1000) return "TAKEOFF";
+    if(alt < 30000) return "CLIMB";
+    return "CRUISE";
 }
 
 };
 
 /* =========================
-   MAIN LOOP
+RENDER CLOCK
+========================= */
+
+function renderClock() {
+    const now = new Date();
+    const h = now.getHours().toString().padStart(2,'0');
+    const m = now.getMinutes().toString().padStart(2,'0');
+    document.getElementById("clock").innerText = `${h}:${m}`;
+}
+
+/* =========================
+MAIN LOOP
 ========================= */
 
 async function update() {
 
-const now = new Date();
-document.getElementById("clock").innerText =
-now.getHours().toString().padStart(2,'0') + ":" +
-now.getMinutes().toString().padStart(2,'0');
+renderClock();
 
-const data = await API.getFlight();
+const dxb = await API.weather(DXB.lat, DXB.lon);
+document.getElementById("dxbWeather").innerText =
+"DXB " + Math.round(dxb.current_weather.temperature) + "°";
 
-if (!data || !data.hasFlight) {
+const flight = await API.getFlight();
+
+if(!flight || !flight.hasFlight) {
     document.getElementById("flight").style.display = "none";
     return;
 }
 
+/* FLIGHT MODE */
 document.getElementById("flight").style.display = "block";
 
-/* FLIGHT INFO */
-document.getElementById("flightNo").innerText = data.flightNo;
-document.getElementById("route").innerText = data.origin + " → " + data.dest;
+document.getElementById("flightNo").innerText = flight.flightNo;
+document.getElementById("route").innerText = flight.origin + " → " + flight.dest;
 
 /* PICKUP */
-const pickup = Engine.calcPickup(data.std);
+const pickup = Engine.pickup(flight.std);
 document.getElementById("pickup").innerText =
 pickup.getHours().toString().padStart(2,'0') + ":" +
 pickup.getMinutes().toString().padStart(2,'0');
 
 /* WEATHER */
-const dep = await API.getWeather(25.25, 55.36);
-const arr = await API.getWeather(14.67, -17.07);
+const dep = await API.weather(25.25,55.36);
+const arr = await API.weather(14.67,-17.07);
 
-document.getElementById("depWeather").innerText =
+document.getElementById("depW").innerText =
 Math.round(dep.current_weather.temperature) + "°";
 
-document.getElementById("arrWeather").innerText =
+document.getElementById("arrW").innerText =
 Math.round(arr.current_weather.temperature) + "°";
+
+/* LIVE STATE */
+const live = await API.liveFlight("UAE" + flight.flightNo);
+
+const st = Engine.state(live);
+
+const el = document.getElementById("status");
+
+el.innerText = st;
+
+el.className = "value";
+
+if(st === "CRUISE") el.classList.add("state");
+if(st === "CLIMB") el.classList.add("warn");
+if(st === "TAKEOFF") el.classList.add("danger");
 
 }
 
+/* LOOP */
 update();
 setInterval(update, 30000);
+setInterval(renderClock, 1000);
 
 </script>
 
