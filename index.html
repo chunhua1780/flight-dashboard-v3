@@ -1,1 +1,198 @@
 
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>FlightOps V3</title>
+
+<style>
+body {
+    margin:0;
+    background:#000;
+    color:#fff;
+    font-family: -apple-system;
+    overflow:hidden;
+}
+
+#clock {
+    font-size: 30vh;
+    text-align:center;
+    margin-top:10vh;
+}
+
+#flight {
+    position:absolute;
+    top:0;
+    width:100%;
+    display:none;
+    padding:20px;
+    box-sizing:border-box;
+}
+
+.card {
+    display:flex;
+    justify-content:space-between;
+    padding:20px;
+    border-bottom:1px solid #222;
+}
+
+.label { color:#888; font-size:12px; }
+.value { font-size:20px; font-weight:bold; }
+
+#weather {
+    position:absolute;
+    bottom:0;
+    width:100%;
+    display:flex;
+    justify-content:space-between;
+    padding:20px;
+    box-sizing:border-box;
+    border-top:1px solid #222;
+}
+
+.box {
+    width:48%;
+}
+</style>
+</head>
+
+<body>
+
+<div id="clock">--:--</div>
+
+<div id="flight">
+
+    <div class="card">
+        <div>
+            <div class="label">FLIGHT</div>
+            <div id="flightNo" class="value">---</div>
+        </div>
+        <div>
+            <div class="label">ROUTE</div>
+            <div id="route" class="value">---</div>
+        </div>
+        <div>
+            <div class="label">PICKUP</div>
+            <div id="pickup" class="value">---</div>
+        </div>
+    </div>
+
+</div>
+
+<div id="weather">
+    <div class="box">
+        <div class="label">DEP WEATHER</div>
+        <div id="depWeather">---</div>
+    </div>
+    <div class="box">
+        <div class="label">ARR WEATHER</div>
+        <div id="arrWeather">---</div>
+    </div>
+</div>
+
+<script>
+
+/* =========================
+   CONFIG
+========================= */
+
+const GAS_URL = "YOUR_GOOGLE_SCRIPT_URL";
+
+/* =========================
+   DATA SERVICE (API层)
+========================= */
+
+const API = {
+
+async getFlight() {
+    const res = await fetch(GAS_URL);
+    return await res.json();
+},
+
+async getWeather(lat, lon) {
+    const res = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`
+    );
+    return await res.json();
+},
+
+async getLiveFlight(code) {
+    try {
+        const res = await fetch(`https://api.opensky-network.org/api/states/all?callsign=${code}`);
+        return await res.json();
+    } catch(e) {
+        return null;
+    }
+}
+
+};
+
+/* =========================
+   ENGINE（飞行状态机）
+========================= */
+
+const Engine = {
+
+getState(radar) {
+    if (!radar) return "SCHEDULED";
+    if (radar.altitude < 1000) return "TAKEOFF";
+    if (radar.altitude > 30000) return "CRUISE";
+    return "DESCENT";
+},
+
+calcPickup(std) {
+    return new Date(new Date(std).getTime() - 135*60000);
+}
+
+};
+
+/* =========================
+   MAIN LOOP
+========================= */
+
+async function update() {
+
+const now = new Date();
+document.getElementById("clock").innerText =
+now.getHours().toString().padStart(2,'0') + ":" +
+now.getMinutes().toString().padStart(2,'0');
+
+const data = await API.getFlight();
+
+if (!data || !data.hasFlight) {
+    document.getElementById("flight").style.display = "none";
+    return;
+}
+
+document.getElementById("flight").style.display = "block";
+
+/* FLIGHT INFO */
+document.getElementById("flightNo").innerText = data.flightNo;
+document.getElementById("route").innerText = data.origin + " → " + data.dest;
+
+/* PICKUP */
+const pickup = Engine.calcPickup(data.std);
+document.getElementById("pickup").innerText =
+pickup.getHours().toString().padStart(2,'0') + ":" +
+pickup.getMinutes().toString().padStart(2,'0');
+
+/* WEATHER */
+const dep = await API.getWeather(25.25, 55.36);
+const arr = await API.getWeather(14.67, -17.07);
+
+document.getElementById("depWeather").innerText =
+Math.round(dep.current_weather.temperature) + "°";
+
+document.getElementById("arrWeather").innerText =
+Math.round(arr.current_weather.temperature) + "°";
+
+}
+
+update();
+setInterval(update, 30000);
+
+</script>
+
+</body>
+</html>
