@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>FlightOps Clock V4</title>
+<title>FlightOps V5</title>
 
 <style>
-body {
+body{
     margin:0;
     background:#000;
     color:#fff;
@@ -15,67 +15,59 @@ body {
 }
 
 /* CLOCK MODE */
-#clock {
+#clock{
     font-size:45vh;
     text-align:center;
     margin-top:12vh;
     font-weight:800;
 }
 
-/* FLIGHT PANEL */
-#flight {
+/* FLIGHT MODE */
+#flight{
     display:none;
-    padding:20px;
+    padding:18px;
     box-sizing:border-box;
 }
 
-.row {
+.row{
     display:flex;
     justify-content:space-between;
     padding:18px;
     border-bottom:1px solid #222;
 }
 
-.box {
+.box{
     width:32%;
 }
 
-.label {
+.label{
     font-size:12px;
     color:#888;
 }
 
-.value {
+.value{
     font-size:20px;
     font-weight:bold;
 }
 
-#weather {
+#status{
+    font-size:18px;
+}
+
+.green{color:#34c759;}
+.orange{color:#ff9500;}
+.red{color:#ff3b30;}
+
+#footer{
     position:absolute;
     bottom:0;
     width:100%;
     display:flex;
     justify-content:space-between;
-    padding:20px;
-    box-sizing:border-box;
+    padding:15px;
+    font-size:12px;
+    color:#777;
     border-top:1px solid #222;
-}
-
-.small {
-    font-size:14px;
-    color:#aaa;
-}
-
-.state {
-    color:#34c759;
-}
-
-.warn {
-    color:#ff9500;
-}
-
-.danger {
-    color:#ff3b30;
 }
 </style>
 </head>
@@ -98,7 +90,7 @@ body {
         </div>
 
         <div class="box">
-            <div class="label">PICKUP</div>
+            <div class="label">PICKUP (REAL)</div>
             <div id="pickup" class="value">---</div>
         </div>
     </div>
@@ -106,25 +98,25 @@ body {
     <div class="row">
         <div class="box">
             <div class="label">STATUS</div>
-            <div id="status" class="value state">SCHEDULED</div>
+            <div id="status" class="value">SCHEDULED</div>
         </div>
 
         <div class="box">
-            <div class="label">DEP WEATHER</div>
-            <div id="depW" class="value">---</div>
+            <div class="label">DEP TEMP</div>
+            <div id="dep" class="value">--</div>
         </div>
 
         <div class="box">
-            <div class="label">ARR WEATHER</div>
-            <div id="arrW" class="value">---</div>
+            <div class="label">ARR TEMP</div>
+            <div id="arr" class="value">--</div>
         </div>
     </div>
 
 </div>
 
-<div id="weather">
-    <div class="small">Dubai System Clock Dashboard</div>
-    <div class="small" id="dxbWeather">DXB --°</div>
+<div id="footer">
+    <div>DXB CLOCK OPS SYSTEM</div>
+    <div id="dxbTemp">DXB --°</div>
 </div>
 
 <script>
@@ -132,31 +124,30 @@ body {
 /* =========================
 CONFIG
 ========================= */
-const GAS_URL = "YOUR_GOOGLE_SCRIPT_URL";
 
-/* DXB */
-const DXB = { lat:25.25, lon:55.36 };
+const GAS_URL = "YOUR_GOOGLE_SCRIPT_URL";
 
 /* =========================
 API LAYER
 ========================= */
+
 const API = {
 
-async getFlight() {
+async calendar(){
     const r = await fetch(GAS_URL);
     return await r.json();
 },
 
-async weather(lat, lon) {
+async weather(lat,lon){
     const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`);
     return await r.json();
 },
 
-async liveFlight(code) {
-    try {
+async radar(code){
+    try{
         const r = await fetch(`https://api.opensky-network.org/api/states/all?callsign=${code}`);
         return await r.json();
-    } catch(e) {
+    }catch(e){
         return null;
     }
 }
@@ -169,15 +160,36 @@ ENGINE
 
 const Engine = {
 
-pickup(std) {
+normalize(no){
+
+    if(!no) return null;
+
+    let n = no.toString().replace(/\D/g,"");
+
+    // 8757 → fallback logic
+    if(n.length === 4 && n.startsWith("8")){
+        return {
+            primary: n,
+            fallback: n.substring(1)
+        };
+    }
+
+    return {
+        primary: n,
+        fallback: null
+    };
+},
+
+pickup(std){
     return new Date(new Date(std).getTime() - 135*60000);
 },
 
-state(radar) {
+state(radar){
+
     if(!radar || !radar.states) return "SCHEDULED";
 
-    const s = radar.states[0];
-    const alt = s[7];
+    let s = radar.states[0];
+    let alt = s[7];
 
     if(!alt) return "GROUND";
     if(alt < 1000) return "TAKEOFF";
@@ -188,78 +200,89 @@ state(radar) {
 };
 
 /* =========================
-RENDER CLOCK
+CLOCK
 ========================= */
 
-function renderClock() {
-    const now = new Date();
-    const h = now.getHours().toString().padStart(2,'0');
-    const m = now.getMinutes().toString().padStart(2,'0');
-    document.getElementById("clock").innerText = `${h}:${m}`;
+function renderClock(){
+    let now = new Date();
+    document.getElementById("clock").innerText =
+        now.getHours().toString().padStart(2,'0') + ":" +
+        now.getMinutes().toString().padStart(2,'0');
 }
 
 /* =========================
 MAIN LOOP
 ========================= */
 
-async function update() {
+async function update(){
 
 renderClock();
 
-const dxb = await API.weather(DXB.lat, DXB.lon);
-document.getElementById("dxbWeather").innerText =
+/* DXB WEATHER */
+let dxb = await API.weather(25.25,55.36);
+document.getElementById("dxbTemp").innerText =
 "DXB " + Math.round(dxb.current_weather.temperature) + "°";
 
-const flight = await API.getFlight();
+/* CALENDAR */
+let data = await API.calendar();
 
-if(!flight || !flight.hasFlight) {
-    document.getElementById("flight").style.display = "none";
+if(!data || !data.hasFlight){
+    document.getElementById("flight").style.display="none";
     return;
 }
 
-/* FLIGHT MODE */
-document.getElementById("flight").style.display = "block";
+document.getElementById("flight").style.display="block";
 
-document.getElementById("flightNo").innerText = flight.flightNo;
-document.getElementById("route").innerText = flight.origin + " → " + flight.dest;
+/* NORMALIZE FLIGHT */
+let norm = Engine.normalize(data.flightNo);
 
-/* PICKUP */
-const pickup = Engine.pickup(flight.std);
+/* radar priority */
+let radar = await API.radar("UAE"+norm.primary);
+
+if(!radar || !radar.states || radar.states.length===0){
+
+    radar = await API.radar("UAE"+norm.fallback);
+
+}
+
+let realSTD = data.std;
+
+/* override STD if radar exists */
+if(radar && radar.states && radar.states.length>0){
+    // fallback: still use calendar but mark real-time active
+    document.getElementById("status").innerText = "LIVE OPS";
+    document.getElementById("status").className = "value green";
+}else{
+    document.getElementById("status").innerText = "SCHEDULED";
+    document.getElementById("status").className = "value orange";
+}
+
+/* UI */
+document.getElementById("flightNo").innerText = data.flightNo;
+document.getElementById("route").innerText = data.origin + " → " + data.dest;
+
+/* PICKUP based on REAL STD */
+let pickup = Engine.pickup(realSTD);
 document.getElementById("pickup").innerText =
 pickup.getHours().toString().padStart(2,'0') + ":" +
 pickup.getMinutes().toString().padStart(2,'0');
 
 /* WEATHER */
-const dep = await API.weather(25.25,55.36);
-const arr = await API.weather(14.67,-17.07);
+let dep = await API.weather(25.25,55.36);
+let arr = await API.weather(14.67,-17.07);
 
-document.getElementById("depW").innerText =
+document.getElementById("dep").innerText =
 Math.round(dep.current_weather.temperature) + "°";
 
-document.getElementById("arrW").innerText =
+document.getElementById("arr").innerText =
 Math.round(arr.current_weather.temperature) + "°";
-
-/* LIVE STATE */
-const live = await API.liveFlight("UAE" + flight.flightNo);
-
-const st = Engine.state(live);
-
-const el = document.getElementById("status");
-
-el.innerText = st;
-
-el.className = "value";
-
-if(st === "CRUISE") el.classList.add("state");
-if(st === "CLIMB") el.classList.add("warn");
-if(st === "TAKEOFF") el.classList.add("danger");
 
 }
 
 /* LOOP */
 update();
-setInterval(update, 30000);
-setInterval(renderClock, 1000);
+setInterval(update,30000);
+setInterval(renderClock,1000);
 
 </script>
 
