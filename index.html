@@ -20,7 +20,7 @@ body {
     margin:0;
     background:var(--bg);
     color:var(--text);
-    font-family: "SF Pro Display", sans-serif;
+    font-family:"SF Pro Display",sans-serif;
     overflow:hidden;
     height:100vh;
 }
@@ -74,25 +74,15 @@ body {
     justify-content:center;
 }
 
-.label {
-    font-size:1.4vh;
-    color:#777;
-}
-
 .val {
     font-size:4vh;
     font-weight:900;
     color:var(--gold);
 }
 
-.pickup-box {
-    background:var(--gold);
-    color:#000;
-    padding:6px 12px;
-    border-radius:8px;
-    font-weight:900;
-    display:inline-block;
-    margin-top:8px;
+.label {
+    font-size:1.4vh;
+    color:#777;
 }
 
 .corner {
@@ -100,12 +90,11 @@ body {
     padding:25px;
 }
 
-.weather-huge {
+.weather {
     font-size:10vh;
     color:var(--gold);
 }
 
-/* Screensaver */
 .screensaver #hud-top { opacity:0; }
 .screensaver #main-clock { font-size:60vh; opacity:0.9; }
 </style>
@@ -114,15 +103,16 @@ body {
 <body>
 
 <div id="hud-top">
+
     <div class="hud-cell">
-        <div class="label">Flight</div>
+        <div class="label">FLIGHT</div>
         <div id="mission-id" class="val">--</div>
-        <div id="pickup-val" class="pickup-box">PICKUP --</div>
+        <div id="pickup-val" style="font-size:2vh;color:#aaa;">--</div>
     </div>
 
     <div class="hud-cell" style="text-align:center;">
+        <div id="dest-icon" style="font-size:6vh;">☀️</div>
         <div id="dest-temp" class="val">--°</div>
-        <div id="clothing-info">--</div>
     </div>
 
     <div class="hud-cell" style="text-align:right;">
@@ -130,17 +120,20 @@ body {
         <div id="notam-brief">SYNC...</div>
         <div id="live-status">● READY</div>
     </div>
+
 </div>
 
 <div id="main-display">
     <div id="clock-zone">
+
         <div class="corner" style="top:0;left:0;">
             <div id="date-val"></div>
             <div id="day-val"></div>
         </div>
 
         <div class="corner" style="top:0;right:0;text-align:right;">
-            <div id="dxb-temp" class="weather-huge">--</div>
+            <div id="dxb-icon" class="weather">☀️</div>
+            <div id="dxb-temp" style="font-size:3vh;">--°</div>
         </div>
 
         <div id="main-clock">00:00</div>
@@ -151,17 +144,26 @@ body {
 
 // ================= CONFIG =================
 const GAS_URL = "https://script.google.com/macros/s/AKfycbxSmqqVM38ZuCrrzwcm1E7179zwvAi5qjhEzaq4mXhwCOeczDP8CB2Nx7hw7zAFcqWU/exec";
+const CALENDAR_ICS_URL = ""; // 可选
 
-// 🔴 你要改这里
-const CALENDAR_ICS_URL = "https://script.google.com/macros/s/AKfycbz1iR3ELklG4f2LVM8O3pA8LKK_Q641MizOPowcJQXP6WFVOxptt35h4QGjsG9nfwwS/exec";
+// ================= WEATHER ICON =================
+function getWeatherIcon(code) {
 
-const AIRPORTS = {
-    DXB:{lat:25.25,lon:55.36,tz:4},
-    CKY:{lat:9.57,lon:-13.61,tz:0},
-    DSS:{lat:14.67,lon:-17.07,tz:0}
-};
+    if (code === 0) return "☀️";
+    if (code <= 2) return "🌤️";
+    if (code <= 3) return "☁️";
 
-// ================= UTIL =================
+    if (code >= 45 && code <= 48) return "🌫️";
+    if (code >= 51 && code <= 67) return "🌧️";
+    if (code >= 71 && code <= 77) return "🌨️";
+    if (code >= 80 && code <= 82) return "🌦️";
+
+    if (code >= 95) return "⛈️";
+
+    return "🌡️";
+}
+
+// ================= SAFE FETCH =================
 async function safeFetch(url){
     try{
         const r = await fetch(url);
@@ -169,102 +171,72 @@ async function safeFetch(url){
     }catch(e){return null;}
 }
 
-// ================= CALENDAR =================
-async function fetchCalendar(){
-    try{
-        const r = await fetch(CALENDAR_ICS_URL);
-        const t = await r.text();
-        return parseICS(t);
-    }catch(e){return [];}
-}
-
-function parseICS(data){
-    const lines=data.split("\n");
-    let ev=null,res=[];
-    for(let l of lines){
-        if(l.includes("BEGIN:VEVENT")) ev={};
-        if(ev){
-            if(l.startsWith("SUMMARY:")) ev.title=l.replace("SUMMARY:","");
-            if(l.startsWith("DTSTART")) ev.start=parseTime(l);
-        }
-        if(l.includes("END:VEVENT")) res.push(ev);
-    }
-    return res;
-}
-
-function parseTime(l){
-    const m=l.match(/:(\d{8}T\d{6})/);
-    if(!m) return null;
-    const t=m[1];
-    return new Date(
-        t.slice(0,4),
-        t.slice(4,6)-1,
-        t.slice(6,8),
-        t.slice(9,11),
-        t.slice(11,13)
-    );
-}
-
-// ================= STATE =================
-function getState(f,now){
-    if(!f?.hasFlight) return "GROUND";
-    const std=new Date(f.std);
-    const dep=std.getTime()-135*60000;
-    if(now>=dep && now<=std.getTime()+8*3600000) return "FLIGHT";
-    return "LAYOVER";
-}
-
-// ================= MAIN =================
+// ================= MAIN UPDATE =================
 async function update(){
 
-    const now=new Date();
+    const now = new Date();
 
-    document.getElementById("main-clock").innerText=
+    document.getElementById("main-clock").innerText =
         now.getHours().toString().padStart(2,"0")+":"+
         now.getMinutes().toString().padStart(2,"0");
 
-    document.getElementById("date-val").innerText=
-        now.getDate();
+    const months=["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
 
-    const f=await safeFetch(GAS_URL);
-    const cal=await fetchCalendar();
+    document.getElementById("date-val").innerText =
+        now.getDate()+" "+months[now.getMonth()];
 
-    const state=getState(f,now);
+    document.getElementById("day-val").innerText =
+        ["SUNDAY","MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY"][now.getDay()];
 
-    if(state==="GROUND"){
-        document.body.classList.remove("flight-active");
-        document.getElementById("live-status").innerText="● GROUND";
-    }
-
-    if(state==="LAYOVER"){
-        document.body.classList.add("flight-active");
-        document.getElementById("mission-id").innerText="LAYOVER";
-        document.getElementById("notam-brief").innerText="CREW REST / NEXT FLIGHT PREP";
-    }
-
-    if(state==="FLIGHT"){
-        document.body.classList.add("flight-active");
-        document.getElementById("mission-id").innerText=f.flightNo||"--";
-        document.getElementById("notam-brief").innerText="FLIGHT ACTIVE";
-    }
-
-    // DXB weather
-    const w=await safeFetch(
+    // ================= DXB WEATHER =================
+    const w = await safeFetch(
         "https://api.open-meteo.com/v1/forecast?latitude=25.25&longitude=55.36&current_weather=true"
     );
 
     if(w?.current_weather){
-        document.getElementById("dxb-temp").innerText=
-            Math.round(w.current_weather.temperature)+"°";
+        const temp = Math.round(w.current_weather.temperature);
+        const code = w.current_weather.weathercode;
+
+        document.getElementById("dxb-temp").innerText = temp + "°";
+        document.getElementById("dxb-icon").innerText = getWeatherIcon(code);
+    }
+
+    // ================= FLIGHT =================
+    const f = await safeFetch(GAS_URL);
+
+    if(f?.hasFlight){
+        document.body.classList.add("flight-active");
+
+        document.getElementById("mission-id").innerText =
+            "EK " + (f.flightNo || "--");
+
+        document.getElementById("notam-brief").innerText =
+            "FLIGHT ACTIVE";
+
+        document.getElementById("live-status").innerText =
+            "● OPS ACTIVE";
+
+        document.getElementById("live-status").style.color = "#34c759";
+
+    } else {
+        document.body.classList.remove("flight-active");
+
+        document.getElementById("live-status").innerText =
+            "● GROUND MODE";
+
+        document.getElementById("notam-brief").innerText =
+            "NO ACTIVE FLIGHT";
     }
 }
 
 // ================= SCREENSAVER =================
-let last=Date.now();
-document.addEventListener("touchstart",()=>last=Date.now());
+let lastTouch = Date.now();
+
+document.addEventListener("touchstart",()=>lastTouch=Date.now());
+document.addEventListener("mousemove",()=>lastTouch=Date.now());
 
 setInterval(()=>{
-    if(Date.now()-last>60000){
+    if(Date.now()-lastTouch>60000){
         document.body.classList.add("screensaver");
     }else{
         document.body.classList.remove("screensaver");
@@ -276,5 +248,6 @@ update();
 setInterval(update,30000);
 
 </script>
+
 </body>
 </html>
